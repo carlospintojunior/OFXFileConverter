@@ -21,7 +21,6 @@ class Transaction {
                 type, date, amount, id, name, memo != null ? memo : "");
     }
 
-    // Formata os dados para o formato CSV com ';' como delimitador
     public String toCsv() {
         return String.join(";", type, date, String.format("%.2f", amount), id, name != null ? name : "", memo != null ? memo : "");
     }
@@ -37,8 +36,9 @@ public class OfxReader {
             return;
         }
 
-        // Ler o arquivo OFX e processar as transações
-        List<Transaction> transactions = readOfxFile(filePath);
+        // Ler o arquivo OFX e processar as informações gerais e transações
+        Map<String, String> accountDetails = new HashMap<>();
+        List<Transaction> transactions = readOfxFile(filePath, accountDetails);
 
         // Verificar se há transações e salvar em CSV
         if (transactions.isEmpty()) {
@@ -47,8 +47,8 @@ public class OfxReader {
             System.out.println("Transactions:");
             transactions.forEach(System.out::println);
 
-            // Salvar as transações em um arquivo CSV
-            saveToCsv(filePath, transactions);
+            // Salvar as transações e os detalhes da conta em um arquivo CSV
+            saveToCsv(filePath, accountDetails, transactions);
         }
     }
 
@@ -70,7 +70,7 @@ public class OfxReader {
         }
     }
 
-    private static List<Transaction> readOfxFile(String filePath) {
+    private static List<Transaction> readOfxFile(String filePath, Map<String, String> accountDetails) {
         List<Transaction> transactions = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
@@ -80,13 +80,30 @@ public class OfxReader {
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
 
-                if (line.startsWith("<STMTTRN>")) {
+                if (line.startsWith("<BANKID>")) {
+                    accountDetails.put("Bank ID", extractValue(line, "BANKID"));
+                } else if (line.startsWith("<ACCTID>")) {
+                    accountDetails.put("Account ID", extractValue(line, "ACCTID"));
+                } else if (line.startsWith("<ACCTTYPE>")) {
+                    accountDetails.put("Account Type", extractValue(line, "ACCTTYPE"));
+                } else if (line.startsWith("<DTSTART>")) {
+                    String rawDate = extractValue(line, "DTSTART");
+                    accountDetails.put("Start Date", formatDate(rawDate, "yyyyMMdd", "dd/MM/yyyy"));
+                } else if (line.startsWith("<DTEND>")) {
+                    String rawDate = extractValue(line, "DTEND");
+                    accountDetails.put("End Date", formatDate(rawDate, "yyyyMMdd", "dd/MM/yyyy"));
+                } else if (line.startsWith("<BALAMT>")) {
+                    accountDetails.put("Balance", extractValue(line, "BALAMT"));
+                } else if (line.startsWith("<DTASOF>")) {
+                    String rawDate = extractValue(line, "DTASOF");
+                    accountDetails.put("Date As Of", formatDate(rawDate, "yyyyMMdd", "dd/MM/yyyy"));
+                } else if (line.startsWith("<STMTTRN>")) {
                     currentTransaction = new Transaction();
                 } else if (line.startsWith("<TRNTYPE>")) {
                     currentTransaction.type = extractValue(line, "TRNTYPE");
                 } else if (line.startsWith("<DTPOSTED>")) {
                     String rawDate = extractValue(line, "DTPOSTED").split("\\[")[0]; // Ignorar o fuso horário
-                    currentTransaction.date = formatDate(rawDate);
+                    currentTransaction.date = formatDate(rawDate, "yyyyMMddHHmmss", "dd/MM/yyyy HH:mm:ss");
                 } else if (line.startsWith("<TRNAMT>")) {
                     currentTransaction.amount = Double.parseDouble(extractValue(line, "TRNAMT"));
                 } else if (line.startsWith("<FITID>")) {
@@ -112,24 +129,40 @@ public class OfxReader {
         return line.replace("<" + tag + ">", "").replace("</" + tag + ">", "").trim();
     }
 
-    private static String formatDate(String rawDate) {
-        // Formatar a data do formato yyyymmddhhnnss para yyyy-MM-dd HH:mm:ss
-        SimpleDateFormat inputFormat = new SimpleDateFormat("yyyyMMddHHmmss");
-        SimpleDateFormat outputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static String formatDate(String rawDate, String inputFormat, String outputFormat) {
+        SimpleDateFormat inFormatter = new SimpleDateFormat(inputFormat);
+        SimpleDateFormat outFormatter = new SimpleDateFormat(outputFormat);
 
         try {
-            return outputFormat.format(inputFormat.parse(rawDate));
+            return outFormatter.format(inFormatter.parse(rawDate));
         } catch (ParseException e) {
             System.err.println("Error parsing date: " + rawDate);
             return rawDate; // Retornar a data original em caso de erro
         }
     }
 
-    private static void saveToCsv(String ofxFilePath, List<Transaction> transactions) {
+    private static void saveToCsv(String ofxFilePath, Map<String, String> accountDetails, List<Transaction> transactions) {
         // Criar o nome do arquivo CSV
         String csvFilePath = ofxFilePath.replaceAll("\\.ofx$", ".csv");
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(csvFilePath))) {
+            // Escrever detalhes da conta
+            writer.write("Bank ID: " + accountDetails.get("Bank ID"));
+            writer.newLine();
+            writer.write("Account ID: " + accountDetails.get("Account ID"));
+            writer.newLine();
+            writer.write("Account Type: " + accountDetails.get("Account Type"));
+            writer.newLine();
+            writer.write("Start Date: " + accountDetails.get("Start Date"));
+            writer.newLine();
+            writer.write("End Date: " + accountDetails.get("End Date"));
+            writer.newLine();
+            writer.write("Balance: " + accountDetails.get("Balance"));
+            writer.newLine();
+            writer.write("Date As Of: " + accountDetails.get("Date As Of"));
+            writer.newLine();
+            writer.newLine();
+
             // Escrever o cabeçalho com ';' como delimitador
             writer.write("Type;Date;Amount;ID;Name;Memo");
             writer.newLine();
@@ -140,7 +173,7 @@ public class OfxReader {
                 writer.newLine();
             }
 
-            System.out.println("Transactions saved to CSV: " + csvFilePath);
+            System.out.println("Transactions and account details saved to CSV: " + csvFilePath);
 
         } catch (IOException e) {
             System.err.println("Error saving to CSV: " + e.getMessage());
