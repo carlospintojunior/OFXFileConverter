@@ -3,6 +3,8 @@ package br.com.vulcanum.ofxreader;
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.*;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 class Transaction {
@@ -11,16 +13,17 @@ class Transaction {
     double amount;
     String id;
     String name;
+    String memo;
 
     @Override
     public String toString() {
-        return String.format("Type: %s, Date: %s, Amount: %.2f, ID: %s, Name: %s",
-                type, date, amount, id, name);
+        return String.format("Type: %s, Date: %s, Amount: %.2f, ID: %s, Name: %s, Memo: %s",
+                type, date, amount, id, name, memo != null ? memo : "");
     }
 
-    // Formata os dados para o formato CSV
+    // Formata os dados para o formato CSV com ';' como delimitador
     public String toCsv() {
-        return String.join(",", type, date, String.format("%.2f", amount), id, name);
+        return String.join(";", type, date, String.format("%.2f", amount), id, name != null ? name : "", memo != null ? memo : "");
     }
 }
 
@@ -82,13 +85,16 @@ public class OfxReader {
                 } else if (line.startsWith("<TRNTYPE>")) {
                     currentTransaction.type = extractValue(line, "TRNTYPE");
                 } else if (line.startsWith("<DTPOSTED>")) {
-                    currentTransaction.date = extractValue(line, "DTPOSTED");
+                    String rawDate = extractValue(line, "DTPOSTED").split("\\[")[0]; // Ignorar o fuso horário
+                    currentTransaction.date = formatDate(rawDate);
                 } else if (line.startsWith("<TRNAMT>")) {
                     currentTransaction.amount = Double.parseDouble(extractValue(line, "TRNAMT"));
                 } else if (line.startsWith("<FITID>")) {
                     currentTransaction.id = extractValue(line, "FITID");
                 } else if (line.startsWith("<NAME>")) {
                     currentTransaction.name = extractValue(line, "NAME");
+                } else if (line.startsWith("<MEMO>")) {
+                    currentTransaction.memo = extractValue(line, "MEMO");
                 } else if (line.startsWith("</STMTTRN>")) {
                     transactions.add(currentTransaction);
                     currentTransaction = null;
@@ -106,13 +112,26 @@ public class OfxReader {
         return line.replace("<" + tag + ">", "").replace("</" + tag + ">", "").trim();
     }
 
+    private static String formatDate(String rawDate) {
+        // Formatar a data do formato yyyymmddhhnnss para yyyy-MM-dd HH:mm:ss
+        SimpleDateFormat inputFormat = new SimpleDateFormat("yyyyMMddHHmmss");
+        SimpleDateFormat outputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+        try {
+            return outputFormat.format(inputFormat.parse(rawDate));
+        } catch (ParseException e) {
+            System.err.println("Error parsing date: " + rawDate);
+            return rawDate; // Retornar a data original em caso de erro
+        }
+    }
+
     private static void saveToCsv(String ofxFilePath, List<Transaction> transactions) {
         // Criar o nome do arquivo CSV
         String csvFilePath = ofxFilePath.replaceAll("\\.ofx$", ".csv");
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(csvFilePath))) {
-            // Escrever o cabeçalho
-            writer.write("Type,Date,Amount,ID,Name");
+            // Escrever o cabeçalho com ';' como delimitador
+            writer.write("Type;Date;Amount;ID;Name;Memo");
             writer.newLine();
 
             // Escrever as transações
